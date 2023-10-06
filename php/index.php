@@ -38,6 +38,15 @@ session_start();
 
 // dependency
 $container = new Container();
+
+// Redis用のコンテナ
+$container->set('redis',function (){
+	$redis = new Redis();
+	$redis->connect('127.0.0.1',6379);
+
+	return $redis;
+});
+
 $container->set('settings', function() {
     return [
         'public_folder' => dirname(dirname(__FILE__)) . '/public',
@@ -372,6 +381,7 @@ $app->post('/', function (Request $request, Response $response) {
             return redirect($response, '/', 302);
         }
 
+
         $db = $this->get('db');
         $query = 'INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)';
         $ps = $db->prepare($query);
@@ -381,7 +391,11 @@ $app->post('/', function (Request $request, Response $response) {
           file_get_contents($_FILES['file']['tmp_name']),
           $params['body'],
         ]);
-        $pid = $db->lastInsertId();
+	$pid = $db->lastInsertId();
+
+	// Redisにキーを$pidとして画像を格納する処理
+	$this->get('redis')->set($pid,file_get_contents($_FILES['file']['tmp_name']));
+
         return redirect($response, "/posts/{$pid}", 302);
     } else {
         $this->get('flash')->addMessage('notice', '画像が必須です');
@@ -394,7 +408,19 @@ $app->get('/image/{id}.{ext}', function (Request $request, Response $response, $
         return $response;
     }
 
-    $post = $this->get('helper')->fetch_first('SELECT * FROM `posts` WHERE `id` = ?', $args['id']);
+    $redis = $this->get('redis');
+
+    // redis上に画像のキャッシュが存在するかの確認
+    // 存在するときはRedisから画像を取り出す
+    // 存在しないときはDBから取り出しRedisに格納
+    if($redis->exists($args['id'])==1){
+        $post = $this->get('helper')->fetch_first('SELECT id,user_id,mime,body,created_at FROM posts WHERE id=?',$args['id']);
+        $post['imgdata']=$redis->get($args['id']);
+    }else{
+        $post = $this->get('helper')->fetch_first('SELECT * FROM `posts` WHERE `id` = ?', $args['id']);
+        $redis->set($args['id'],$post['imgdata']);
+    }
+
 
     if (($args['ext'] == 'jpg' && $post['mime'] == 'image/jpeg') ||
         ($args['ext'] == 'png' && $post['mime'] == 'image/png') ||
