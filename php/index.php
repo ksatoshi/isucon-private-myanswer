@@ -140,7 +140,7 @@ $container->set('helper', function ($c) {
 
             $posts = [];
             foreach ($results as $post) {
-                $post['comment_count'] = $this->fetch_first('SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?', $post['id'])['count'];
+                $post['comment_count'] = $this->fetch_first('SELECT comment_count FROM posts WHERE id = ?', $post['id'])['comment_count'];
                 $query = 'SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC';
                 if (!$all_comments) {
                     $query .= ' LIMIT 3';
@@ -383,7 +383,7 @@ $app->post('/', function (Request $request, Response $response) {
 
 
         $db = $this->get('db');
-        $query = 'INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)';
+        $query = 'INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`,`comment_count`) VALUES (?,?,?,?,0)';
         $ps = $db->prepare($query);
         $ps->execute([
           $me['id'],
@@ -414,7 +414,7 @@ $app->get('/image/{id}.{ext}', function (Request $request, Response $response, $
     // 存在するときはRedisから画像を取り出す
     // 存在しないときはDBから取り出しRedisに格納
     if($redis->exists($args['id'])==1){
-        $post = $this->get('helper')->fetch_first('SELECT id,user_id,mime,body,created_at FROM posts WHERE id=?',$args['id']);
+        $post = $this->get('helper')->fetch_first('SELECT id,user_id,mime,body,created_at,comment_count FROM posts WHERE id=?',$args['id']);
         $post['imgdata']=$redis->get($args['id']);
     }else{
         $post = $this->get('helper')->fetch_first('SELECT * FROM `posts` WHERE `id` = ?', $args['id']);
@@ -460,6 +460,10 @@ $app->post('/comment', function (Request $request, Response $response) {
         $params['comment']
     ]);
 
+    // postsのcomment_countをインクリメントする処理
+    $query = 'UPDATE posts SET comment_count = comment_count+1 WHERE id = ?';
+    $ps = $this->get('db')->prepare($query);
+    $ps->execute([$post_id]);
     return redirect($response, "/posts/{$post_id}", 302);
 });
 
